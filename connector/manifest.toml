@@ -1,0 +1,83 @@
+# Aileron connector manifest for github://ALRubinger/aileron-connector-slack.
+#
+# Per ADR-0002 the manifest declares the connector's identity, what it
+# can talk to (network), and what credentials it needs to do so. The
+# runtime enforces these at the WASM sandbox boundary and at the action
+# boundary (defense in depth per ADR-0003 / ADR-0005).
+#
+# This connector targets Slack's public HTTP API. The v1 reference
+# pattern (aileron-connector-google) is the model: Slack OAuth 2.0 with
+# PKCE, no client_secret committed to source, `Authorization: Bearer
+# <token>` injected host-side at the network boundary.
+
+# `version` is `0.0.0-dev` in source as a placeholder. CI substitutes
+# the real version (extracted from the pushed tag) into a build copy
+# before hashing/signing/packing — the same release-template pattern
+# as the action manifests' `sha256:bound-at-release` hash. The
+# committed source intentionally keeps the placeholder so the
+# publisher does not edit version fields by hand on every release.
+[connector]
+name = "github://ALRubinger/aileron-connector-slack"
+version = "0.0.0-dev"
+publisher = "ALRubinger"
+
+# Network capability — the only host:port pair this connector is
+# allowed to dial. Anything else is denied at the sandbox boundary
+# with class capability_denied (ADR-0005 acceptance #3). Slack's
+# public API is rooted at slack.com (`https://slack.com/api/*`).
+[capabilities.network]
+hosts = ["slack.com:443"]
+
+# Credential capability — the kind of credential the runtime resolves
+# and injects on the connector's behalf. Per ADR-0005 the connector
+# never holds the credential bytes; the runtime sets
+# `Authorization: Bearer <token>` host-side when an outbound request
+# marks itself as `credential: "oauth2"`.
+[capabilities.credential]
+kind = "oauth2"
+scope = "Read your Slack channels and search history; send messages on your behalf"
+
+# OAuth provider config — the runtime drives the OAuth dance using
+# these endpoints when the user runs `aileron binding setup`. Per
+# ADR-0006 we use PKCE.
+#
+# Slack supports two OAuth grant types:
+#   - v2 bot tokens (xoxb)  — installed app, scopes via `scope`
+#   - v2 user tokens (xoxp) — acts as the user, scopes via `user_scope`
+#
+# We request user scopes because `search.messages` is user-token-only.
+# Slack will issue both a bot and a user token if `scope` and
+# `user_scope` are both present at authorize time; Aileron's runtime
+# uses the user token for all three actions this connector ships.
+# (`chat.postMessage` works with user tokens and posts as the user;
+# `conversations.list` and `search.messages` both accept user tokens.)
+#
+# `client_id` is intentionally a placeholder until the Slack app
+# registration completes — see README.md "Slack app setup (publisher
+# side)". The runtime fails closed if a placeholder client_id is
+# shipped to a real release.
+#
+# `client_secret` is a release-time bound value, not a source-repo
+# value. Slack auto-rotates committed `xoxe`/`xoxs` style tokens on
+# detection (and GitHub's secret scanner forwards them to Slack
+# automatically). The committed source carries the placeholder string
+# below; the release workflow substitutes it from the
+# `SLACK_OAUTH_CLIENT_SECRET` repository secret before signing and
+# packing — same template pattern as the connector content hash and
+# the version. See ADR-0002's PKCE section for the full rationale.
+[capabilities.credential.oauth2]
+authorize_url = "https://slack.com/oauth/v2/authorize"
+token_url     = "https://slack.com/api/oauth.v2.access"
+client_id     = "REPLACE_WITH_SLACK_CLIENT_ID"
+client_secret = "bound-at-release"
+# User-token scopes — what the user authorizes Aileron to do as them.
+# `search:read` is user-token-only and underwrites `search-messages`.
+# `chat:write` on the user scope makes posts appear as the user, not
+# as an "Aileron app" bot. `channels:read` lists public channels;
+# `users:read` resolves user ids in search results to display names.
+scopes = [
+  "chat:write",
+  "channels:read",
+  "users:read",
+  "search:read",
+]

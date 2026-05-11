@@ -1,0 +1,92 @@
+name: Release
+
+# Atomic release: one push of a `vX.Y.Z` tag produces the connector
+# tarball (under tag `vX.Y.Z`) AND every action tarball (under tag
+# `actions/<name>/vX.Y.Z`), all pinned to the same connector content
+# hash.
+#
+# The pipeline is implemented as composite actions in
+# github.com/ALRubinger/aileron-actions. Each `uses:` is SHA-pinned for
+# supply-chain trust — a retag of the upstream actions repo cannot
+# change what runs against this repo's signing key. See that repo's
+# README for the contract each action expects from the connector source
+# layout.
+#
+# This workflow carries the one connector-specific step the generic
+# actions can't: substituting the Slack OAuth `client_secret` repo
+# secret into `connector/manifest.toml` before the manifest is hashed
+# and signed.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ALRubinger/aileron-actions/actions/setup-go-wasm@114e7470b97ea98816e8910231e59e0b5d54030b
+
+      - uses: ALRubinger/aileron-actions/actions/build-wasm-connector@114e7470b97ea98816e8910231e59e0b5d54030b
+
+      - name: Substitute placeholder OAuth client_secret in connector manifest
+        env:
+          SLACK_OAUTH_CLIENT_SECRET: ${{ secrets.SLACK_OAUTH_CLIENT_SECRET }}
+        run: |
+          # `client_secret` is a release-time bound value, never
+          # committed to source — committed Slack OAuth client_secrets
+          # are auto-revoked by Slack when GitHub's secret scanner
+          # forwards them. The committed source carries
+          # `client_secret = "bound-at-release"`; CI replaces it with
+          # the `SLACK_OAUTH_CLIENT_SECRET` repo secret. Per ADR-0002,
+          # the bound value lives only in the signed connector tarball.
+          #
+          # Must run AFTER build-wasm-connector (which substitutes the
+          # version placeholder) and BEFORE sign-and-publish (which
+          # hashes the manifest as part of `wasm || manifest`).
+          if [ -z "$SLACK_OAUTH_CLIENT_SECRET" ]; then
+            echo "::error::SLACK_OAUTH_CLIENT_SECRET repo secret is not set"
+            exit 1
+          fi
+
+          # Guard: exactly one occurrence of the quoted placeholder.
+          # The unquoted substring `bound-at-release` also shows up
+          # in human-prose comments (referring to the action-manifest
+          # hash placeholder `sha256:bound-at-release`), so we match
+          # the full literal `"bound-at-release"` to anchor on the
+          # config line and not on prose.
+          count=$(grep -c '"bound-at-release"' connector/manifest.toml || true)
+          if [ "$count" != "1" ]; then
+            echo "::error::expected exactly one '\"bound-at-release\"' placeholder in connector/manifest.toml; found $count"
+            exit 1
+          fi
+
+          # GitHub Actions masks repo-secret values in stdout/stderr,
+          # so `ps`-visible interpolation in this single line is not a
+          # log-leak risk. Slack client_secret values are 32-char
+          # lowercase-hex strings with no sed-special chars.
+          sed -i "s|\"bound-at-release\"|\"$SLACK_OAUTH_CLIENT_SECRET\"|" connector/manifest.toml
+
+          if grep -q '"bound-at-release"' connector/manifest.toml; then
+            echo "::error::placeholder still present after substitution"
+            exit 1
+          fi
+          echo "Substituted SLACK_OAUTH_CLIENT_SECRET into connector/manifest.toml"
+
+      - id: connector
+        uses: ALRubinger/aileron-actions/actions/sign-and-publish@114e7470b97ea98816e8910231e59e0b5d54030b
+        with:
+          signing-key: ${{ secrets.AILERON_SIGNING_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: ALRubinger/aileron-actions/actions/publish-action-subpaths@114e7470b97ea98816e8910231e59e0b5d54030b
+        with:
+          signing-key: ${{ secrets.AILERON_SIGNING_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          connector-hash: ${{ steps.connector.outputs.connector-hash }}
