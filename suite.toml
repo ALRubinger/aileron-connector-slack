@@ -1,0 +1,8 @@
+name = "slack"
+description = "List Slack channels, search message history, and post messages (with per-call approval) as the authorizing user."
+
+actions = [
+  "actions/list-channels",
+  "actions/search-messages",
+  "actions/send-message",
+]
