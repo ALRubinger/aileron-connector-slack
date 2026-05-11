@@ -68,7 +68,7 @@ scope = "Read your Slack channels and search history; send messages on your beha
 [capabilities.credential.oauth2]
 authorize_url = "https://slack.com/oauth/v2/authorize"
 token_url     = "https://slack.com/api/oauth.v2.access"
-client_id     = "REPLACE_WITH_SLACK_CLIENT_ID"
+client_id     = "10932208786550.10937893063812"
 client_secret = "bound-at-release"
 # User-token scopes — what the user authorizes Aileron to do as them.
 # `search:read` is user-token-only and underwrites `search-messages`.
